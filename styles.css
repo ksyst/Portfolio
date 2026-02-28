@@ -8,4 +8,6 @@ body {
 h1 {
     color: #333;
     text-align: center;
+    height: 100px;
+    line-height: 100px;
 }
