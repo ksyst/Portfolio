@@ -1,0 +1,401 @@
+import { useState, useMemo } from "react";
+
+const FMT = (n) =>
+  new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(Math.round(n));
+
+const FMT2 = (n) =>
+  new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(n);
+
+const LAKH = 100000;
+
+function calcEMI(P, annualRate, months) {
+  const r = annualRate / 12 / 100;
+  if (r === 0) return P / months;
+  return (P * r * Math.pow(1 + r, months)) / (Math.pow(1 + r, months) - 1);
+}
+
+function marginalRate(taxRate, cessRate) {
+  return (taxRate / 100) * (1 + cessRate / 100);
+}
+
+function calcFD(principal, annualYield, months, effTaxRate) {
+  const years = months / 12;
+  const grossInterest = principal * (annualYield / 100) * years;
+  const tax = grossInterest * effTaxRate;
+  return { grossInterest, tax, netInterest: grossInterest - tax };
+}
+
+function calcEquity(principal, cagr, months, ltcgRate, ltcgExemptPerFY, numFY) {
+  const years = months / 12;
+  const finalValue = principal * Math.pow(1 + cagr / 100, years);
+  const gain = finalValue - principal;
+  const totalExempt = ltcgExemptPerFY * numFY;
+  const taxableGain = Math.max(0, gain - totalExempt);
+  const tax = taxableGain * (ltcgRate / 100);
+  return { finalValue, gain, tax, netGain: gain - tax };
+}
+
+function Section({ title, children }) {
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, letterSpacing: "0.12em",
+        textTransform: "uppercase", color: "#7B8FA1", marginBottom: 12,
+        borderBottom: "1px solid #E8EDF2", paddingBottom: 6
+      }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Slider({ label, value, min, max, step, onChange, format, hint }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+        <label style={{ fontSize: 13, color: "#3D4F61", fontWeight: 500 }}>{label}</label>
+        <span style={{
+          fontSize: 15, fontWeight: 700, color: "#1A2F45",
+          fontVariantNumeric: "tabular-nums"
+        }}>{format(value)}</span>
+      </div>
+      <input
+        type="range" min={min} max={max} step={step} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ width: "100%", accentColor: "#2B6CB0", height: 4 }}
+      />
+      {hint && <div style={{ fontSize: 11, color: "#9AACBB", marginTop: 2 }}>{hint}</div>}
+    </div>
+  );
+}
+
+function ResultCard({ label, value, sub, highlight, warn }) {
+  return (
+    <div style={{
+      background: highlight ? "#EBF4FF" : warn ? "#FFF8E1" : "#F7FAFB",
+      border: `1px solid ${highlight ? "#BEE3F8" : warn ? "#FFE082" : "#E2EAF0"}`,
+      borderRadius: 10, padding: "12px 16px", marginBottom: 10
+    }}>
+      <div style={{ fontSize: 12, color: "#7B8FA1", marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: highlight ? "#1A5276" : warn ? "#7D5A00" : "#1A2F45", fontVariantNumeric: "tabular-nums" }}>
+        {value}
+      </div>
+      {sub && <div style={{ fontSize: 11, color: "#9AACBB", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function TabBtn({ label, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "6px 14px", borderRadius: 6, border: "none",
+      background: active ? "#2B6CB0" : "transparent",
+      color: active ? "#fff" : "#7B8FA1", fontWeight: 600,
+      fontSize: 12, cursor: "pointer", transition: "all 0.15s"
+    }}>{label}</button>
+  );
+}
+
+function InvestmentRow({ label, net, cost, profit, monthly, highlight }) {
+  const positive = profit >= 0;
+  return (
+    <tr style={{ background: highlight ? "#EBF4FF" : "transparent" }}>
+      <td style={{ padding: "10px 8px", fontSize: 13, color: "#1A2F45", fontWeight: highlight ? 700 : 400 }}>{label}</td>
+      <td style={{ padding: "10px 8px", fontSize: 13, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>₹{FMT(net)}</td>
+      <td style={{ padding: "10px 8px", fontSize: 13, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>₹{FMT(cost)}</td>
+      <td style={{ padding: "10px 8px", fontSize: 13, textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 700, color: positive ? "#276749" : "#C53030" }}>
+        {positive ? "+" : ""}₹{FMT(profit)}
+      </td>
+      <td style={{ padding: "10px 8px", fontSize: 12, textAlign: "right", fontVariantNumeric: "tabular-nums", color: positive ? "#276749" : "#C53030" }}>
+        {positive ? "+" : ""}₹{FMT(monthly)}/mo
+      </td>
+    </tr>
+  );
+}
+
+export default function App() {
+  // Loan inputs
+  const [loanLakh, setLoanLakh] = useState(30);
+  const [loanRate, setLoanRate] = useState(6);
+  const [tenure, setTenure] = useState(32);
+  const [numLoans, setNumLoans] = useState(5);
+
+  // Tax inputs
+  const [taxSlab, setTaxSlab] = useState(30);
+  const [cess, setCess] = useState(4);
+
+  // FD inputs
+  const [fdRate1, setFdRate1] = useState(7);
+  const [fdRate2, setFdRate2] = useState(8);
+  const [fdRate3, setFdRate3] = useState(9);
+
+  // Equity inputs
+  const [equityCagr, setEquityCagr] = useState(12);
+  const [ltcgRate, setLtcgRate] = useState(12.5);
+  const [ltcgExempt, setLtcgExempt] = useState(1.25);
+  const [use80C, setUse80C] = useState(true);
+  const [limit80C, setLimit80C] = useState(1.5);
+
+  // Tab
+  const [tab, setTab] = useState("single");
+
+  const principal = loanLakh * LAKH;
+  const effTax = marginalRate(taxSlab, cess);
+  const numFY = tenure / 12;
+
+  const results = useMemo(() => {
+    const emi = calcEMI(principal, loanRate, tenure);
+    const totalPayment = emi * tenure;
+    const totalInterest = totalPayment - principal;
+
+    const fd1 = calcFD(principal, fdRate1, tenure, effTax);
+    const fd2 = calcFD(principal, fdRate2, tenure, effTax);
+    const fd3 = calcFD(principal, fdRate3, tenure, effTax);
+
+    const eq = calcEquity(principal, equityCagr, tenure, ltcgRate, ltcgExempt * LAKH, numFY);
+    const saving80C = use80C ? (limit80C * LAKH) * effTax * numFY : 0;
+
+    const eqNetWithBonus = eq.netGain + saving80C;
+
+    return {
+      emi, totalPayment, totalInterest,
+      fd: [
+        { label: `FD @ ${fdRate1}%`, net: fd1.netInterest, profit: fd1.netInterest - totalInterest },
+        { label: `FD @ ${fdRate2}%`, net: fd2.netInterest, profit: fd2.netInterest - totalInterest },
+        { label: `FD @ ${fdRate3}%`, net: fd3.netInterest, profit: fd3.netInterest - totalInterest },
+      ],
+      equity: {
+        label: `Equity @ ${equityCagr}% CAGR`,
+        net: eq.netGain,
+        profit: eq.netGain - totalInterest
+      },
+      equityWith80C: {
+        label: `Equity + 80C`,
+        net: eqNetWithBonus,
+        profit: eqNetWithBonus - totalInterest,
+        saving80C
+      }
+    };
+  }, [principal, loanRate, tenure, effTax, fdRate1, fdRate2, fdRate3,
+    equityCagr, ltcgRate, ltcgExempt, use80C, limit80C, numFY]);
+
+  const best = results.equityWith80C.profit;
+  const bestMonthly = best / tenure;
+
+  return (
+    <div style={{
+      fontFamily: "'Inter', 'Segoe UI', sans-serif",
+      background: "#F0F4F8",
+      minHeight: "100vh",
+      padding: "24px 16px"
+    }}>
+      {/* Header */}
+      <div style={{ maxWidth: 900, margin: "0 auto 24px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
+          <div style={{
+            background: "#2B6CB0", color: "#fff",
+            borderRadius: 8, padding: "6px 12px",
+            fontSize: 11, fontWeight: 700, letterSpacing: "0.08em"
+          }}>ARBITRAGE CALCULATOR</div>
+        </div>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: "#1A2F45", lineHeight: 1.2 }}>
+          Loan vs Investment
+        </h1>
+        <p style={{ margin: "6px 0 0", fontSize: 13, color: "#7B8FA1" }}>
+          Find the net profit from borrowing and deploying capital across instruments
+        </p>
+      </div>
+
+      <div style={{ maxWidth: 900, margin: "0 auto", display: "grid", gridTemplateColumns: "300px 1fr", gap: 20 }}>
+
+        {/* Left panel — inputs */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+          {/* Loan */}
+          <div style={{ background: "#fff", borderRadius: 14, padding: "20px 20px 12px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+            <Section title="Loan Parameters">
+              <Slider label="Loan Amount" value={loanLakh} min={5} max={200} step={1}
+                onChange={setLoanLakh} format={(v) => `₹${v} L`} />
+              <Slider label="Loan Interest Rate" value={loanRate} min={4} max={18} step={0.1}
+                onChange={setLoanRate} format={(v) => `${FMT2(v)}% pa`} />
+              <Slider label="Loan Tenure" value={tenure} min={6} max={120} step={1}
+                onChange={setTenure} format={(v) => `${v} mo`} />
+              <Slider label="Number of Loans" value={numLoans} min={1} max={10} step={1}
+                onChange={setNumLoans} format={(v) => `${v}×`} hint="For concurrent/sequential comparison" />
+            </Section>
+          </div>
+
+          {/* Tax */}
+          <div style={{ background: "#fff", borderRadius: 14, padding: "20px 20px 12px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+            <Section title="Tax Profile">
+              <Slider label="Income Tax Slab" value={taxSlab} min={5} max={30} step={5}
+                onChange={setTaxSlab} format={(v) => `${v}%`} />
+              <Slider label="Cess" value={cess} min={0} max={4} step={1}
+                onChange={setCess} format={(v) => `${v}%`} />
+              <div style={{ fontSize: 12, color: "#7B8FA1", background: "#F7FAFB", borderRadius: 7, padding: "8px 10px" }}>
+                Effective marginal rate: <strong style={{ color: "#1A2F45" }}>{(effTax * 100).toFixed(2)}%</strong>
+              </div>
+            </Section>
+          </div>
+
+          {/* FD rates */}
+          <div style={{ background: "#fff", borderRadius: 14, padding: "20px 20px 12px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+            <Section title="FD / Bond Yields">
+              <Slider label="FD Rate 1" value={fdRate1} min={3} max={15} step={0.25}
+                onChange={setFdRate1} format={(v) => `${FMT2(v)}%`} />
+              <Slider label="FD Rate 2" value={fdRate2} min={3} max={15} step={0.25}
+                onChange={setFdRate2} format={(v) => `${FMT2(v)}%`} />
+              <Slider label="FD Rate 3 (high-yield)" value={fdRate3} min={3} max={15} step={0.25}
+                onChange={setFdRate3} format={(v) => `${FMT2(v)}%`} />
+            </Section>
+          </div>
+
+          {/* Equity */}
+          <div style={{ background: "#fff", borderRadius: 14, padding: "20px 20px 12px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+            <Section title="Equity / ELSS">
+              <Slider label="Expected CAGR" value={equityCagr} min={4} max={25} step={0.5}
+                onChange={setEquityCagr} format={(v) => `${FMT2(v)}%`} />
+              <Slider label="LTCG Tax Rate" value={ltcgRate} min={0} max={20} step={0.5}
+                onChange={setLtcgRate} format={(v) => `${FMT2(v)}%`} />
+              <Slider label="LTCG Exempt (₹ L/FY)" value={ltcgExempt} min={0} max={5} step={0.25}
+                onChange={setLtcgExempt} format={(v) => `₹${v} L`} />
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                <input type="checkbox" id="use80c" checked={use80C} onChange={(e) => setUse80C(e.target.checked)}
+                  style={{ accentColor: "#2B6CB0" }} />
+                <label htmlFor="use80c" style={{ fontSize: 13, color: "#3D4F61" }}>Include 80C deduction (ELSS)</label>
+              </div>
+              {use80C && (
+                <Slider label="80C Limit" value={limit80C} min={0.5} max={2} step={0.1}
+                  onChange={setLimit80C} format={(v) => `₹${v} L/FY`} />
+              )}
+            </Section>
+          </div>
+        </div>
+
+        {/* Right panel — results */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+          {/* Top KPIs */}
+          <div style={{ background: "#1A2F45", borderRadius: 14, padding: "20px 24px", boxShadow: "0 2px 8px rgba(0,0,0,0.12)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#5B8AAE", marginBottom: 14 }}>
+              Single Loan Summary
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+              {[
+                { label: "Monthly EMI", value: `₹${FMT(results.emi)}` },
+                { label: "Total Interest Cost", value: `₹${FMT(results.totalInterest)}` },
+                { label: "Best Net Profit", value: `₹${FMT(best)}`, accent: true },
+              ].map((k) => (
+                <div key={k.label} style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "#5B8AAE", marginBottom: 4 }}>{k.label}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: k.accent ? "#68D391" : "#fff", fontVariantNumeric: "tabular-nums" }}>{k.value}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 14, borderTop: "1px solid #2D4A63", paddingTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: "#5B8AAE" }}>Best avg. monthly profit</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#68D391", fontVariantNumeric: "tabular-nums" }}>
+                  +₹{FMT(bestMonthly)}/mo
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: "#5B8AAE" }}>Net spread over loan</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#68D391" }}>
+                  ~{FMT2(((best / (principal * numFY)) * 100))}% pa (post-tax)
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Comparison table */}
+          <div style={{ background: "#fff", borderRadius: 14, padding: "20px 20px 8px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7B8FA1", marginBottom: 12 }}>
+              Per-Loan Comparison — {tenure} months
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid #E8EDF2" }}>
+                    {["Instrument", "Net Earnings (after tax)", "Loan Interest Cost", "Net Profit", "Monthly Avg"].map(h => (
+                      <th key={h} style={{ padding: "6px 8px", textAlign: h === "Instrument" ? "left" : "right", fontSize: 11, color: "#9AACBB", fontWeight: 600 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.fd.map((fd) => (
+                    <InvestmentRow key={fd.label} label={fd.label}
+                      net={fd.net} cost={results.totalInterest}
+                      profit={fd.profit} monthly={fd.profit / tenure} />
+                  ))}
+                  <tr><td colSpan={5} style={{ padding: "4px 0" }}><div style={{ borderTop: "1px dashed #E2EAF0" }} /></td></tr>
+                  <InvestmentRow label={results.equity.label}
+                    net={results.equity.net} cost={results.totalInterest}
+                    profit={results.equity.profit} monthly={results.equity.profit / tenure} />
+                  <InvestmentRow label={`Equity + 80C (₹${FMT(results.equityWith80C.saving80C)} saved)`}
+                    net={results.equityWith80C.net} cost={results.totalInterest}
+                    profit={results.equityWith80C.profit} monthly={results.equityWith80C.profit / tenure}
+                    highlight />
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Multi-loan tab */}
+          <div style={{ background: "#fff", borderRadius: 14, padding: "20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7B8FA1" }}>
+                {numLoans}× Loans
+              </div>
+              <div style={{ background: "#F0F4F8", borderRadius: 8, padding: 4, display: "flex", gap: 4 }}>
+                <TabBtn label="Concurrent" active={tab === "concurrent"} onClick={() => setTab("concurrent")} />
+                <TabBtn label="Sequential" active={tab === "sequential"} onClick={() => setTab("sequential")} />
+                <TabBtn label="Single" active={tab === "single"} onClick={() => setTab("single")} />
+              </div>
+            </div>
+
+            {tab === "single" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <ResultCard label="EMI per month" value={`₹${FMT(results.emi)}`} />
+                <ResultCard label="Total interest cost" value={`₹${FMT(results.totalInterest)}`} />
+                <ResultCard label="Best net profit (Equity+80C)" value={`₹${FMT(best)}`} highlight />
+                <ResultCard label="Avg. monthly profit" value={`₹${FMT(bestMonthly)}/mo`} highlight />
+              </div>
+            )}
+
+            {tab === "concurrent" && (() => {
+              const totalEMI = results.emi * numLoans;
+              const totalProfit = best * numLoans;
+              const monthlyEarnings = (results.equityWith80C.net * numLoans) / tenure;
+              const netCashFlow = monthlyEarnings - totalEMI;
+              return (
+                <div>
+                  <div style={{ fontSize: 12, color: "#7B8FA1", marginBottom: 12, background: "#FFF8E1", borderRadius: 8, padding: "8px 12px", border: "1px solid #FFE082" }}>
+                    ⚠️ All {numLoans} loans active simultaneously. You need other income to cover EMIs during the tenure.
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <ResultCard label={`Combined EMI (${numLoans}×)`} value={`₹${FMT(totalEMI)}/mo`} warn />
+                    <ResultCard label="Monthly investment earnings" value={`₹${FMT(monthlyEarnings)}/mo`} />
+                    <ResultCard label="Net monthly cash-flow" value={`${netCashFlow >= 0 ? "+" : ""}₹${FMT(netCashFlow)}/mo`} warn={netCashFlow < 0} highlight={netCashFlow >= 0}
+                      sub={netCashFlow < 0 ? "Needs other income to bridge" : "Positive from day one"} />
+                    <ResultCard label={`Total profit at end (${numLoans}×)`} value={`₹${FMT(totalProfit)}`} highlight />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {tab === "sequential" && (() => {
+              const totalProfit = best * numLoans;
+              const totalMonths = tenure * numLoans;
+              const avgMonthly = totalProfit / totalMonths;
+              return (
+                <div>
+                  <div style={{ fontSize: 12, color: "#7B8FA1", marginBottom: 12, background: "#EBF4FF", borderRadius: 8, padding: "8px 12px", border: "1px solid #BEE3F8" }}>
+                    ✅ One loan at a time, each cycle {tenure} months. Total duration: {totalMonths} months ({FMT2(totalMonths / 12)} yrs).
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <ResultCard label="EMI (one at a time)" value={`₹${FMT(results.emi)}/mo`} />
+                    <ResultCard label="Cycles" value={`${numLoans} × ${tenure} mo`} />
+                    <ResultCard label="Total profit (all cycles)" value={`₹${FMT(totalProfit)}`} highlight />
+                    <ResultCard label="Avg. monthly
